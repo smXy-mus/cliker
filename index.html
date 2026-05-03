@@ -1,0 +1,242 @@
+<!doctype html>
+<html lang="ru">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate" />
+  <meta http-equiv="Pragma" content="no-cache" />
+  <meta http-equiv="Expires" content="0" />
+  <title>Кликер</title>
+  <style>
+    :root {
+      --bg: #0f1220;
+      --card: #171a2b;
+      --text: #f2f4ff;
+      --muted: #b4bad9;
+      --accent: #7c8cff;
+      --accent-2: #4ecdc4;
+      --danger: #ff6b6b;
+      --border: #2b3152;
+    }
+
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      font-family: system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif;
+      background: radial-gradient(1200px 800px at 30% -10%, #1f2550, var(--bg));
+      color: var(--text);
+      padding: 16px;
+    }
+
+    .wrap { max-width: 720px; margin: 0 auto; }
+    .card {
+      background: #14182a;
+      border: 1px solid var(--border);
+      border-radius: 16px;
+      padding: 16px;
+      margin-bottom: 14px;
+      box-shadow: 0 8px 30px rgba(0,0,0,.25);
+    }
+
+    h1, h2 { margin: 0 0 12px; }
+    h1 { font-size: 40px; }
+    h2 { font-size: 28px; }
+
+    .stats { line-height: 1.55; font-size: 24px; }
+    .hint { color: var(--muted); margin-top: 10px; font-size: 20px; }
+
+    .row { display: flex; gap: 10px; flex-wrap: wrap; }
+    button {
+      cursor: pointer;
+      border: 1px solid var(--border);
+      background: #242a49;
+      color: var(--text);
+      border-radius: 12px;
+      padding: 12px 16px;
+      font-size: 24px;
+      transition: .15s transform, .15s filter;
+    }
+    button:hover { filter: brightness(1.12); }
+    button:active { transform: translateY(1px) scale(.99); }
+    button.primary { background: var(--accent); color: #fff; border-color: transparent; font-weight: 700; }
+    button.warn { background: var(--danger); border-color: transparent; }
+
+    .shop-item {
+      display: grid;
+      grid-template-columns: 1fr auto;
+      gap: 8px;
+      align-items: center;
+      padding: 10px;
+      border-radius: 12px;
+      border: 1px solid var(--border);
+      margin-bottom: 8px;
+      background: #1f2440;
+    }
+    .shop-title { font-size: 22px; }
+    .shop-sub { font-size: 18px; color: var(--muted); }
+  </style>
+</head>
+<body>
+  <main class="wrap">
+    <section class="card">
+      <h1>💰 Кликер</h1>
+      <div class="stats" id="stats"></div>
+      <button class="primary" id="clickBtn">КЛИК!</button>
+      <p class="hint">Каждый ребитх даёт +20% к доходу навсегда и кристаллы новой валюты.</p>
+    </section>
+
+    <section class="card">
+      <h2>🛒 Магазин монет</h2>
+      <div id="coinShop"></div>
+    </section>
+
+    <section class="card">
+      <h2>💎 Магазин кристаллов</h2>
+      <div id="crystalShop"></div>
+    </section>
+
+    <section class="card">
+      <h2>🔁 Ребитх</h2>
+      <button id="rebirthBtn" class="warn">Сделать ребитх</button>
+    </section>
+  </main>
+
+  <script>
+    // Если WebView подхватил старую "diff"-версию из кэша, вычищаем артефакты (+, @@, ---/+++).
+    (function sanitizeDiffArtifacts() {
+      const badLine = /^(\+\+\+|---|@@|\+\s?$)/;
+      const walker = document.createTreeWalker(document.body, NodeFilter.SHOW_TEXT);
+      const toClean = [];
+      while (walker.nextNode()) {
+        const node = walker.currentNode;
+        if (!node.nodeValue || !node.nodeValue.trim()) continue;
+        const lines = node.nodeValue.split('\n');
+        if (lines.some(l => badLine.test(l.trim()))) {
+          toClean.push(node);
+        }
+      }
+      toClean.forEach((node) => {
+        const cleaned = node.nodeValue
+          .split('\n')
+          .filter((line) => !badLine.test(line.trim()))
+          .join('\n');
+        node.nodeValue = cleaned;
+      });
+    })();
+  </script>
+
+  <script>
+    const state = {
+      coins: 0,
+      totalCoins: 0,
+      crystals: 0,
+      clickPower: 1,
+      autoIncome: 0,
+      rebirths: 0,
+      multiplier: 1,
+    };
+
+    const coinItems = [
+      { name: 'Палец', baseCost: 25, gain: 1, owned: 0 },
+      { name: 'Курсор', baseCost: 100, gain: 3, owned: 0 },
+      { name: 'Бот', baseCost: 500, gain: 12, owned: 0 },
+    ];
+
+    const crystalItems = [
+      { name: 'Алмазный клик', baseCost: 3, gain: 1, owned: 0 },
+      { name: 'Ядро дохода', baseCost: 7, gain: 4, owned: 0 },
+    ];
+
+    const fmt = (n) => Math.floor(n).toLocaleString('ru-RU');
+    const growth = (base, owned) => Math.floor(base * Math.pow(1.15, owned));
+
+    function renderStats() {
+      const s = document.getElementById('stats');
+      s.innerHTML = `
+        <div><strong>${fmt(state.coins)}</strong> монет</div>
+        <div>За клик: ${fmt(state.clickPower * state.multiplier)} | Автодоход: ${fmt(state.autoIncome * state.multiplier)}/сек | Ребитхи: ${state.rebirths}</div>
+        <div>Кристаллы: ${fmt(state.crystals)} | Всего монет за игру: ${fmt(state.totalCoins)}</div>
+      `;
+    }
+
+    function renderShop() {
+      const coinShop = document.getElementById('coinShop');
+      coinShop.innerHTML = '';
+      coinItems.forEach((item, idx) => {
+        const cost = growth(item.baseCost, item.owned);
+        const el = document.createElement('div');
+        el.className = 'shop-item';
+        el.innerHTML = `<div><div class="shop-title">${item.name} (${item.owned})</div><div class="shop-sub">+${item.gain}/сек • Цена: ${fmt(cost)} монет</div></div>`;
+        const btn = document.createElement('button');
+        btn.textContent = 'Купить';
+        btn.onclick = () => {
+          if (state.coins < cost) return;
+          state.coins -= cost;
+          item.owned++;
+          state.autoIncome += item.gain;
+          render();
+        };
+        el.appendChild(btn);
+        coinShop.appendChild(el);
+      });
+
+      const crystalShop = document.getElementById('crystalShop');
+      crystalShop.innerHTML = '';
+      crystalItems.forEach((item, idx) => {
+        const cost = growth(item.baseCost, item.owned);
+        const el = document.createElement('div');
+        el.className = 'shop-item';
+        el.innerHTML = `<div><div class="shop-title">${item.name} (${item.owned})</div><div class="shop-sub">+${item.gain} к клику • Цена: ${fmt(cost)} кристаллов</div></div>`;
+        const btn = document.createElement('button');
+        btn.textContent = 'Купить';
+        btn.onclick = () => {
+          if (state.crystals < cost) return;
+          state.crystals -= cost;
+          item.owned++;
+          state.clickPower += item.gain;
+          render();
+        };
+        el.appendChild(btn);
+        crystalShop.appendChild(el);
+      });
+    }
+
+    function render() {
+      renderStats();
+      renderShop();
+    }
+
+    document.getElementById('clickBtn').onclick = () => {
+      const gain = state.clickPower * state.multiplier;
+      state.coins += gain;
+      state.totalCoins += gain;
+      renderStats();
+    };
+
+    document.getElementById('rebirthBtn').onclick = () => {
+      if (state.coins < 20000) {
+        alert('Нужно минимум 20 000 монет для ребитха');
+        return;
+      }
+      state.crystals += Math.max(1, Math.floor(state.coins / 20000));
+      state.coins = 0;
+      state.clickPower = 1;
+      state.autoIncome = 0;
+      state.rebirths += 1;
+      state.multiplier = Math.pow(1.2, state.rebirths);
+      coinItems.forEach(i => i.owned = 0);
+      render();
+    };
+
+    setInterval(() => {
+      const gain = state.autoIncome * state.multiplier;
+      if (gain <= 0) return;
+      state.coins += gain;
+      state.totalCoins += gain;
+      renderStats();
+    }, 1000);
+
+    render();
+  </script>
+</body>
+</html>
